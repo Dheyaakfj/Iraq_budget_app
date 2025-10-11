@@ -21,7 +21,13 @@ for fontname in ["Segoe UI", "Arial", "Tahoma", "Noto Naskh Arabic", "Amiri", "D
     except Exception:
         continue
 
-st.set_page_config(page_title="تحليل سيناريو الموازنة العراقية", layout="wide")
+st.set_page_config(
+    page_title="تحليل سيناريو الموازنة العراقية",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="auto",
+)
+
 
 # اجعل واجهة ستريملت RTL بدون إعادة تشكيل الحروف
 st.markdown("""
