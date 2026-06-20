@@ -117,6 +117,17 @@ section[data-testid="stSidebar"] * {{ text-align: right; }}
     .stTabs [data-baseweb="tab"] {{ padding: 6px 10px; font-size: 13px; white-space: nowrap; }}
     /* تقليص الحشو الجانبي لاستغلال عرض الشاشة */
     .block-container {{ padding-left: 0.6rem !important; padding-right: 0.6rem !important; }}
+
+    /* إصلاح: عند طي المدخلات لا يبقى شريط في المنتصف */
+    section[data-testid="stSidebar"][aria-expanded="false"] {{
+        display: none !important;
+        width: 0 !important; min-width: 0 !important;
+        transform: translateX(-110%) !important;
+    }}
+    [data-testid="stSidebarResizeHandle"],
+    [data-testid="stSidebarCollapseButton"] {{ display: none !important; }}
+    /* المحتوى يأخذ كامل العرض عند الطي */
+    [data-testid="stAppViewContainer"] > .main {{ width: 100% !important; }}
 }}
 </style>
 """,
