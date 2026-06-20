@@ -97,6 +97,27 @@ section[data-testid="stSidebar"] * {{ text-align: right; }}
     background: #fbf6e9; border-right: 4px solid {ACCENT};
     padding: 10px 14px; border-radius: 8px; font-size: 13px; color: #5b4f2e;
 }}
+
+/* ===== التجاوب مع الموبايل ===== */
+@media (max-width: 640px) {{
+    /* تكديس الأعمدة عمودياً (البطاقات والرسوم جنباً إلى جنب) */
+    [data-testid="stHorizontalBlock"] {{ flex-wrap: wrap !important; gap: 10px !important; }}
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
+    [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
+        flex: 1 1 100% !important; width: 100% !important; min-width: 100% !important;
+    }}
+    /* تصغير الرأس والخطوط */
+    .app-hero {{ padding: 18px 16px; border-radius: 14px; }}
+    .app-hero h1 {{ font-size: 21px; }}
+    .app-hero p  {{ font-size: 13px; }}
+    .kpi {{ padding: 12px 14px; }}
+    .kpi .value {{ font-size: 21px; }}
+    /* تمرير أفقي لشريط التبويبات بدل الازدحام */
+    .stTabs [data-baseweb="tab-list"] {{ overflow-x: auto; flex-wrap: nowrap; }}
+    .stTabs [data-baseweb="tab"] {{ padding: 6px 10px; font-size: 13px; white-space: nowrap; }}
+    /* تقليص الحشو الجانبي لاستغلال عرض الشاشة */
+    .block-container {{ padding-left: 0.6rem !important; padding-right: 0.6rem !important; }}
+}}
 </style>
 """,
     unsafe_allow_html=True,
