@@ -20,6 +20,7 @@ from scenario_engine_ar import (
     تقدير_التضخم,
     ملخص_السيناريو,
     حساب_الموازنة,
+    صافي_براميل_التصدير,
     حفظ_النتائج,
 )
 
@@ -166,6 +167,56 @@ def style_fig(fig, height=380):
 
 
 # ----------------------------------------------------------------------
+# تحميل بيانات البنك المركزي الفعلية (إن وُجدت)
+# ----------------------------------------------------------------------
+import os
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+
+@st.cache_data
+def تحميل_بيانات_المركزي():
+    """يحمّل ملفات CSV المستخرجة من بيانات البنك المركزي. يعيد None إن لم توجد."""
+    out = {}
+    for key, fname in [
+        ("سنوي", "cbi_annual.csv"),
+        ("مالية_شهري", "cbi_fiscal_monthly.csv"),
+        ("مالية_سنوي", "cbi_fiscal_annual.csv"),
+    ]:
+        path = os.path.join(_DATA_DIR, fname)
+        try:
+            idx0 = (key == "سنوي")  # ملف المؤشرات السنوية عموده الأول فهرس
+            out[key] = pd.read_csv(path, index_col=0 if idx0 else None)
+        except Exception:
+            out[key] = None
+    return out
+
+
+def قيمة_سنوية(بيانات, مؤشر, سنة, افتراضي=None):
+    """يجلب قيمة مؤشر سنوي من جدول cbi_annual."""
+    df = بيانات.get("سنوي")
+    if df is None or مؤشر not in df.index or str(سنة) not in df.columns:
+        return افتراضي
+    try:
+        v = float(df.loc[مؤشر, str(سنة)])
+        return v if v == v else افتراضي  # تفادي NaN
+    except Exception:
+        return افتراضي
+
+
+# قيم افتراضية مُعايَرة على بيانات البنك المركزي (Dec 2024 / Dec 2025)
+المعايرة = {
+    "2025": dict(احتياطي=126661, نقد=132081, رسمي=1300, واردات=74.0,
+                 اجمالي=141228, جاري=119164, غير_نفطي=12000),
+    "2024": dict(احتياطي=130347, نقد=142320, رسمي=1300, واردات=74.3,
+                 اجمالي=150527, جاري=125214, غير_نفطي=12000),
+    "مخصّص": dict(احتياطي=126661, نقد=132081, رسمي=1300, واردات=74.0,
+                 اجمالي=141228, جاري=119164, غير_نفطي=12000),
+}
+
+بيانات_المركزي = تحميل_بيانات_المركزي()
+
+
+# ----------------------------------------------------------------------
 # الرأس
 # ----------------------------------------------------------------------
 st.markdown(
@@ -185,6 +236,13 @@ st.markdown(
 with st.sidebar:
     st.header("⚙️ المدخلات")
 
+    سنة_مرجعية = st.selectbox(
+        "📅 سنة المعايرة (قيم البنك المركزي)",
+        ["2025", "2024", "مخصّص"], index=0,
+        help="تضبط القيم الافتراضية أدناه على الأرقام الرسمية للسنة المختارة.",
+    )
+    d = المعايرة.get(سنة_مرجعية, المعايرة["2025"])
+
     with st.expander("🛢️ النفط والصادرات", expanded=True):
         اسعار = st.multiselect(
             "أسعار النفط (دولار/برميل)",
@@ -196,28 +254,28 @@ with st.sidebar:
         حصة = st.slider("حصة الحكومة من الصادرات", 0.0, 1.0, 1.0, 0.05)
 
     with st.expander("💱 سعر الصرف", expanded=True):
-        رسمي = st.number_input("السعر الرسمي الحالي (دينار/دولار)", value=1310, step=10)
+        رسمي = st.number_input("السعر الرسمي الحالي (دينار/دولار)", value=d["رسمي"], step=10)
         موازي = st.number_input("السعر الموازي في السوق (دينار/دولار)", value=1500, step=10)
         اسعار_صرف = st.multiselect(
             "سيناريوهات سعر الصرف (للتخفيض)",
             [1190, 1250, 1300, 1310, 1350, 1400, 1450, 1500, 1550, 1600],
-            default=[1310, 1400, 1450, 1500],
+            default=[1300, 1400, 1450, 1500],
         )
 
     with st.expander("💰 المالية العامة (مليار دينار)", expanded=False):
-        غير_نفطي = st.number_input("الإيرادات غير النفطية", value=20000, step=500)
-        اجمالي = st.number_input("إجمالي النفقات", value=199000, step=1000)
-        جاري = st.number_input("النفقات الجارية", value=150000, step=1000)
+        غير_نفطي = st.number_input("الإيرادات غير النفطية", value=d["غير_نفطي"], step=500)
+        اجمالي = st.number_input("إجمالي النفقات", value=d["اجمالي"], step=1000)
+        جاري = st.number_input("النفقات الجارية", value=d["جاري"], step=1000)
         استخدم_الاجمالي = st.toggle("استخدام الإجمالي بدل الجاري", value=True)
 
     with st.expander("🏦 النقد والاحتياطي (مليار دينار)", expanded=False):
-        احتياطي = st.number_input("الاحتياطيات الأجنبية", value=132000, step=1000)
-        نقد = st.number_input("النقد القاعدي", value=104000, step=1000)
+        احتياطي = st.number_input("الاحتياطيات الأجنبية", value=d["احتياطي"], step=1000)
+        نقد = st.number_input("النقد القاعدي", value=d["نقد"], step=1000)
         نسبة_المركزي = st.slider("نسبة تمويل المركزي للعجز", 0.0, 1.0, 0.3, 0.05)
         نسبة_فائض = st.slider("نسبة الفائض تذهب للاحتياطي", 0.0, 1.0, 0.5, 0.05)
 
     with st.expander("📈 التضخم والاستيراد", expanded=False):
-        واردات = st.number_input("الواردات السنوية (مليار دولار)", value=60.0, step=1.0)
+        واردات = st.number_input("الواردات السنوية (مليار دولار)", value=d["واردات"], step=1.0)
         حصة_مستورد = st.slider("حصة السلع المستوردة في سلة المستهلك", 0.0, 1.0, 0.40, 0.05)
         تمرير = st.slider("معامل تمرير الصرف إلى الأسعار", 0.0, 1.0, 0.50, 0.05)
 
@@ -295,9 +353,10 @@ st.write("")
 # ----------------------------------------------------------------------
 # التبويبات
 # ----------------------------------------------------------------------
-tab_overview, tab_fx, tab_gap, tab_sens, tab_infl, tab_data = st.tabs(
+tab_overview, tab_fx, tab_gap, tab_sens, tab_infl, tab_real, tab_data = st.tabs(
     ["📊 نظرة عامة", "💱 تخفيض سعر الصرف", "↔️ الفجوة الموازية/الرسمية",
-     "🔥 الحساسية المزدوجة", "📈 التضخم والاستيراد", "🗂️ البيانات والتصدير"]
+     "🔥 الحساسية المزدوجة", "📈 التضخم والاستيراد",
+     "📅 البيانات الفعلية (CBI)", "🗂️ البيانات والتصدير"]
 )
 
 # --- نظرة عامة ---------------------------------------------------------
@@ -491,6 +550,119 @@ with tab_infl:
                  "زيادة فاتورة الاستيراد (مليار دينار)"]].style.format("{:,.1f}"),
         width='stretch',
     )
+
+# --- البيانات الفعلية (CBI) --------------------------------------------
+with tab_real:
+    df_year = بيانات_المركزي.get("سنوي")
+    df_fis = بيانات_المركزي.get("مالية_سنوي")
+
+    if df_year is None and df_fis is None:
+        st.warning("ملفات البيانات الفعلية غير موجودة (مجلد data/). "
+                   "شغّل extract_cbi_data.py لتوليدها من ملف البنك المركزي.")
+    else:
+        st.markdown(
+            '<div class="note">بيانات رسمية من البنك المركزي العراقي (سنوية 2023–2025، '
+            'ومالية حتى أحدث شهر متاح). تُستخدم لمعايرة الافتراضات والتحقق من النموذج.</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ---- المؤشرات السنوية ----
+        if df_year is not None:
+            سنوات = list(df_year.columns)
+
+            def صف(مؤشر):
+                try:
+                    return [float(x) for x in df_year.loc[مؤشر].values]
+                except Exception:
+                    return [None] * len(سنوات)
+
+            r1, r2 = st.columns(2)
+            with r1:
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=سنوات, y=صف("الاحتياطيات الأجنبية (مليار دينار)"),
+                                     marker_color=PRIMARY, name="الاحتياطي"))
+                fig.add_trace(go.Scatter(x=سنوات, y=صف("M0 الأساس النقدي (مليار دينار)"),
+                                         mode="lines+markers", name="M0", line=dict(color=ACCENT, width=3)))
+                fig.update_layout(title="الاحتياطي الأجنبي و M0 (مليار دينار)")
+                st.plotly_chart(style_fig(fig), width='stretch')
+            with r2:
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=سنوات, y=صف("التضخم %"), marker_color="#2E86AB", name="التضخم"))
+                fig.add_trace(go.Scatter(x=سنوات, y=صف("سعر الصرف (دينار/دولار)"),
+                                         mode="lines+markers", name="سعر الصرف", line=dict(color=DANGER, width=3),
+                                         yaxis="y2"))
+                fig.update_layout(
+                    title="التضخم وسعر الصرف الرسمي",
+                    yaxis=dict(title="التضخم %"),
+                    yaxis2=dict(title="سعر الصرف", overlaying="y", side="left",
+                                anchor="free", position=0.0, showgrid=False),
+                )
+                st.plotly_chart(style_fig(fig), width='stretch')
+
+        # ---- المالية: الإيرادات/النفقات/العجز السنوي ----
+        if df_fis is not None:
+            fis = df_fis[df_fis["الشهر"] == 12].copy()  # السنوات المكتملة فقط
+            if not fis.empty:
+                سنوات_م = [str(int(y)) for y in fis["السنة"]]
+                fig = go.Figure()
+                fig.add_trace(go.Bar(x=سنوات_م, y=fis["الإيرادات السنوية (مليار دينار)"] / 1000.0,
+                                     name="الإيرادات", marker_color=PRIMARY))
+                fig.add_trace(go.Bar(x=سنوات_م, y=fis["النفقات السنوية (مليار دينار)"] / 1000.0,
+                                     name="النفقات", marker_color=DANGER))
+                fig.add_trace(go.Scatter(x=سنوات_م, y=fis["الرصيد السنوي (مليار دينار)"] / 1000.0,
+                                         name="الرصيد", mode="lines+markers+text",
+                                         text=[f"{v/1000:,.1f}" for v in fis["الرصيد السنوي (مليار دينار)"]],
+                                         textposition="top center", line=dict(color=INK, width=3)))
+                fig.update_layout(title="الموازنة الفعلية: الإيرادات والنفقات والرصيد (ترليون دينار)",
+                                  barmode="group")
+                st.plotly_chart(style_fig(fig, height=420), width='stretch')
+
+        # ---- التحقق: مقارنة النموذج بالواقع ----
+        st.subheader("🔎 التحقق: النموذج مقابل الواقع")
+        if df_fis is not None and not df_fis[df_fis["الشهر"] == 12].empty:
+            سنوات_متاحة = [str(int(y)) for y in df_fis[df_fis["الشهر"] == 12]["السنة"]]
+            ساق = st.columns([1, 1])
+            with ساق[0]:
+                سنة_تحقق = st.selectbox("سنة التحقق", سنوات_متاحة, index=len(سنوات_متاحة) - 1)
+            صف_سنة = df_fis[(df_fis["السنة"] == int(سنة_تحقق)) & (df_fis["الشهر"] == 12)].iloc[0]
+            ايراد_فعلي = float(صف_سنة["الإيرادات السنوية (مليار دينار)"])
+            نفقات_فعلية = float(صف_سنة["النفقات السنوية (مليار دينار)"])
+            رصيد_فعلي = float(صف_سنة["الرصيد السنوي (مليار دينار)"])
+
+            صرف_سنة = قيمة_سنوية(بيانات_المركزي, "سعر الصرف (دينار/دولار)", سنة_تحقق, p.سعر_الصرف_الرسمي)
+            براميل_سنوياً = صافي_براميل_التصدير(p) * 1_000_000 * 365
+            نفط_ضمني = ايراد_فعلي - غير_نفطي  # ما يُنسب للنفط بعد طرح غير النفطي
+            سعر_ضمني = (نفط_ضمني * 1e9) / (براميل_سنوياً * صرف_سنة) if براميل_سنوياً and صرف_سنة else None
+
+            with ساق[1]:
+                st.caption(f"بافتراض إيراد غير نفطي = {غير_نفطي:,.0f} مليار دينار "
+                           f"وسعر صرف {صرف_سنة:,.0f} وصادرات {صافي_براميل_التصدير(p):.2f} مليون ب/ي.")
+
+            v1, v2, v3 = st.columns(3)
+            with v1:
+                st.markdown(kpi_card("العجز الفعلي", fmt_trln(رصيد_فعلي),
+                                     f"إيراد {ايراد_فعلي/1000:,.1f} − نفقات {نفقات_فعلية/1000:,.1f}",
+                                     "neg" if رصيد_فعلي < 0 else "pos"), unsafe_allow_html=True)
+            with v2:
+                st.markdown(kpi_card("سعر النفط الضمني", f"{سعر_ضمني:,.1f}$" if سعر_ضمني else "—",
+                                     "السعر الذي يفسّر الإيراد الفعلي"), unsafe_allow_html=True)
+            with v3:
+                سعر_فعلي = st.number_input("سعر النفط الفعلي المعروف (للمقارنة)", value=0.0, step=1.0,
+                                           help="أدخل متوسط سعر تصدير النفط الفعلي لتلك السنة للمقارنة.")
+                فرق = (سعر_ضمني - سعر_فعلي) if (سعر_ضمني and سعر_فعلي) else None
+                st.markdown(kpi_card("الفرق عن الفعلي",
+                                     (f"{فرق:+,.1f}$" if فرق is not None else "—"),
+                                     "كلما اقترب من الصفر، كان النموذج أدق",
+                                     "pos" if (فرق is not None and abs(فرق) < 5) else ""),
+                            unsafe_allow_html=True)
+            st.caption("فكرة التحقق: نشتقّ من الإيراد الفعلي «سعر النفط الضمني» وفق معادلة النموذج، "
+                       "ثم نقارنه بمتوسط السعر الفعلي. التقارب يؤكد سلامة منطق الإيراد النفطي.")
+
+        # جدول المؤشرات الخام
+        if df_year is not None:
+            with st.expander("📋 جدول المؤشرات السنوية الكامل"):
+                st.dataframe(df_year, width='stretch')
+
 
 # --- البيانات والتصدير -------------------------------------------------
 with tab_data:
