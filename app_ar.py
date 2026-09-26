@@ -6,9 +6,11 @@
 """
 
 import io
+from html import escape
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from cbi_data import load_data, latest_preset, data_signature, LATEST_SCENARIO
+from input_provenance import describe_input, format_value, audit_row, INPUT_UNITS, official_inputs
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -381,6 +383,29 @@ section[data-testid="stSidebar"] [data-testid="stIconMaterial"] {{
     color: {PRIMARY} !important;
 }}
 
+/* مصدر المدخل؛ نص صريح مع لون مساعد */
+.input-origin {{
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    margin-top: -10px;
+    margin-bottom: 2px;
+    color: #536860;
+    font-size: 12px;
+    line-height: 1.7;
+}}
+.input-origin .origin-badge {{
+    border-radius: 6px;
+    padding: 1px 7px;
+    font-weight: 600;
+    background: #EEF2F1;
+    color: #435952;
+}}
+.input-origin.official .origin-badge {{ background: #E6F4EF; color: #0A604B; }}
+.input-origin.manual .origin-badge {{ background: #FFF1D6; color: #805200; }}
+.input-origin a {{ color: #0A604B; text-decoration: underline; text-underline-offset: 3px; }}
+
 /* صناديق الملاحظات والتنبيه */
 .note {{
     background: #fbf8f0;
@@ -584,6 +609,28 @@ if بيانات_المركزي.get("snapshot"):
     }
 
 
+input_audit = []
+
+
+def عرض_مصدر_المدخل(field, label, value):
+    baseline = d.get(field, next(iter(السيناريوهات_المسبقة.values()))[field])
+    detail = describe_input(value, baseline, input_sources.get(field),
+                            historical=سيناريو_مختار in السيناريوهات_المسبقة)
+    input_audit.append(audit_row(label, detail, INPUT_UNITS[field]))
+    parts = [f'<span class="origin-badge">{detail["label"]}</span>']
+    if detail["origin"] == "official":
+        parts.append(f'<bdi dir="ltr">{escape(detail["period"])}</bdi>')
+        link_text = "المرجع الرسمي" if detail["kind"] == "manual" else "البنك المركزي"
+        parts.append(f'<a href="{escape(detail["source_url"], quote=True)}" target="_blank" rel="noopener noreferrer">{link_text}</a>')
+    elif detail["origin"] == "reference":
+        parts.append('<span>قيمة ثابتة للسيناريو</span>')
+    else:
+        parts.append('<span>قابل للتعديل · غير مستخرج من النشرة</span>')
+    if detail["kind"] == "manual":
+        parts.append(f'<span>المرجع: <bdi dir="ltr">{escape(format_value(detail["reference"]))}</bdi></span>')
+    st.markdown(f'<div class="input-origin {detail["kind"]}" data-field="{escape(field)}">{"".join(parts)}</div>', unsafe_allow_html=True)
+
+
 # ----------------------------------------------------------------------
 # الشريط الجانبي — المدخلات والسيناريوهات الجاهزة
 # ----------------------------------------------------------------------
@@ -608,6 +655,8 @@ with st.sidebar:
     # changing a widget default does not reset the previous session value.
     revision = بيانات_المركزي.get("snapshot", {}).get("source", {}).get("sha256", "") if سيناريو_مختار == LATEST_SCENARIO else ""
     widget_scope = f"inputs:{سيناريو_مختار}:{revision}"
+    input_sources = official_inputs(بيانات_المركزي["snapshot"]) if سيناريو_مختار == LATEST_SCENARIO else {}
+    st.caption("رسمي: قيمة من النشرة مع فترتها ومصدرها. افتراض: اختيار للنموذج. تعديل القيمة الرسمية يجعلها معدّلة يدويًا.")
 
     with st.expander("🛢️ النفط والإنتاج والتكاليف", expanded=True):
         اسعار = st.multiselect(
@@ -616,6 +665,10 @@ with st.sidebar:
             default=d.get("اسعار_النفط", [50, 60, 70, 80, 90, 110]),
             key=f"{widget_scope}:اسعار",
         )
+        if not اسعار:
+            اسعار = [60]
+            st.caption("لم تُحدد قيم؛ تُستخدم القيمة الاحتياطية الموضحة في سجل المدخلات.")
+        عرض_مصدر_المدخل("اسعار_النفط", "أسعار النفط (دولار/برميل)", اسعار)
         انتاج = st.number_input(
             "حجم الإنتاج الكلي (مليون برميل/يوم)",
             value=float(d.get("حجم_الصادرات_مليون_برميل_يوم", 4.2)),
@@ -623,6 +676,7 @@ with st.sidebar:
             help="إجمالي إنتاج النفط الخام في العراق (عادة بين 4.0 و 4.3 م ب/ي)",
             key=f"{widget_scope}:انتاج",
         )
+        عرض_مصدر_المدخل("حجم_الصادرات_مليون_برميل_يوم", "حجم الإنتاج الكلي (مليون برميل/يوم)", انتاج)
         محلي = st.number_input(
             "الاستهلاك المحلي للمصافي (مليون برميل/يوم)",
             value=float(d.get("الاستهلاك_المحلي_مليون_برميل_يوم", 0.8)),
@@ -630,7 +684,9 @@ with st.sidebar:
             help="النفط الخام الموجه للمصافي المحلية ومحطات الكهرباء",
             key=f"{widget_scope}:محلي",
         )
+        عرض_مصدر_المدخل("الاستهلاك_المحلي_مليون_برميل_يوم", "الاستهلاك المحلي للمصافي (مليون برميل/يوم)", محلي)
         حصة = st.slider("حصة الحكومة من الصادرات", 0.0, 1.0, float(d.get("حصة_الحكومة_من_الصادرات", 1.0)), 0.05, key=f"{widget_scope}:حصة")
+        عرض_مصدر_المدخل("حصة_الحكومة_من_الصادرات", "حصة الحكومة من الصادرات", حصة)
 
         صافي_تصدير_يومي = max(انتاج - محلي, 0.0) * حصة
         st.caption(f"🔹 صافي التصدير الحكومي: **{صافي_تصدير_يومي:.2f}** مليون برميل/يوم ({صافي_تصدير_يومي * 365:.1f} مليون برميل سنوياً)")
@@ -642,6 +698,7 @@ with st.sidebar:
             help="فارق خصم سلة نفط العراق التصديرية عن خام برنت العالمي القياسي (عادة 2-4$)",
             key=f"{widget_scope}:خصم_بصرة",
         )
+        عرض_مصدر_المدخل("خصم_خام_البصرة_دولار", "خصم خام البصرة عن برنت (دولار/برميل)", خصم_بصرة)
         كلفة_برميل = st.number_input(
             "كلف جولات التراخيص والاستخراج (دولار/برميل)",
             value=float(d.get("كلفة_انتاج_البرميل_دولار", 0.0)),
@@ -649,21 +706,31 @@ with st.sidebar:
             help="مستحقات شركات النفط العالمية ككلفة استخراج لكل برميل مصدّر (إن وُجدت)",
             key=f"{widget_scope}:كلفة_برميل",
         )
+        عرض_مصدر_المدخل("كلفة_انتاج_البرميل_دولار", "كلف جولات التراخيص والاستخراج (دولار/برميل)", كلفة_برميل)
 
     with st.expander("💱 سعر الصرف", expanded=True):
         رسمي = st.number_input("السعر الرسمي الحالي (دينار/دولار)", value=float(d.get("سعر_الصرف_الرسمي", 1300.0)), step=10.0, key=f"{widget_scope}:رسمي")
+        عرض_مصدر_المدخل("سعر_الصرف_الرسمي", "السعر الرسمي الحالي (دينار/دولار)", رسمي)
         موازي = st.number_input("السعر الموازي في السوق (دينار/دولار)", value=float(d.get("سعر_الصرف_الموازي", 1500.0)), step=10.0, key=f"{widget_scope}:موازي")
+        عرض_مصدر_المدخل("سعر_الصرف_الموازي", "السعر الموازي في السوق (دينار/دولار)", موازي)
         اسعار_صرف = st.multiselect(
             "سيناريوهات سعر الصرف (للتخفيض)",
             sorted(set([1190, 1250, 1300, 1310, 1350, 1400, 1450, 1500, 1550, 1600] + d.get("اسعار_الصرف_سيناريو", []))),
             default=d.get("اسعار_الصرف_سيناريو", [1300, 1400, 1450, 1500]),
             key=f"{widget_scope}:اسعار_صرف",
         )
+        if not اسعار_صرف:
+            اسعار_صرف = [رسمي]
+            st.caption("لم تُحدد قيم؛ تُستخدم القيمة الاحتياطية الموضحة في سجل المدخلات.")
+        عرض_مصدر_المدخل("اسعار_الصرف_سيناريو", "سيناريوهات سعر الصرف (للتخفيض)", اسعار_صرف)
 
     with st.expander("💰 المالية العامة (مليار دينار)", expanded=False):
         غير_نفطي = st.number_input("الإيرادات غير النفطية", value=float(d.get("ايرادات_غير_نفطية_مليار", 12000.0)), step=500.0, key=f"{widget_scope}:غير_نفطي")
+        عرض_مصدر_المدخل("ايرادات_غير_نفطية_مليار", "الإيرادات غير النفطية", غير_نفطي)
         اجمالي = st.number_input("إجمالي النفقات", value=float(d.get("اجمالي_النفقات_مليار", 141228.0)), step=1000.0, key=f"{widget_scope}:اجمالي")
+        عرض_مصدر_المدخل("اجمالي_النفقات_مليار", "إجمالي النفقات", اجمالي)
         جاري = st.number_input("النفقات الجارية", value=float(d.get("النفقات_الجارية_مليار", 119164.0)), step=1000.0, key=f"{widget_scope}:جاري")
+        عرض_مصدر_المدخل("النفقات_الجارية_مليار", "النفقات الجارية", جاري)
         رواتب = st.number_input(
             "فاتورة الرواتب والتقاعد والرعاية",
             value=float(d.get("فاتورة_الرواتب_مليار", 68000.0)),
@@ -671,24 +738,27 @@ with st.sidebar:
             help="الكتلة المالية غير المرنة المخصصة لتعويضات الموظفين والتقاعد وشبكة الحماية الاجتماعية",
             key=f"{widget_scope}:رواتب",
         )
+        عرض_مصدر_المدخل("فاتورة_الرواتب_مليار", "فاتورة الرواتب والتقاعد والرعاية", رواتب)
         استخدم_الاجمالي = st.toggle("استخدام الإجمالي بدل الجاري", value=d.get("استخدام_الاجمالي", True), key=f"{widget_scope}:استخدم_الاجمالي")
+        عرض_مصدر_المدخل("استخدام_الاجمالي", "استخدام الإجمالي بدل الجاري", استخدم_الاجمالي)
 
     with st.expander("🏦 النقد والاحتياطي (مليار دينار)", expanded=False):
         احتياطي = st.number_input("الاحتياطيات الأجنبية", value=float(d.get("الاحتياطيات_الاجنبية_مليار", 126661.0)), step=1000.0, key=f"{widget_scope}:احتياطي")
+        عرض_مصدر_المدخل("الاحتياطيات_الاجنبية_مليار", "الاحتياطيات الأجنبية", احتياطي)
         نقد = st.number_input("النقد القاعدي M0", value=float(d.get("النقد_القاعدي_مليار", 132081.0)), step=1000.0, key=f"{widget_scope}:نقد")
+        عرض_مصدر_المدخل("النقد_القاعدي_مليار", "النقد القاعدي M0", نقد)
         نسبة_المركزي = st.slider("نسبة تمويل المركزي للعجز", 0.0, 1.0, float(d.get("نسبة_تمويل_المركزي", 0.3)), 0.05, key=f"{widget_scope}:نسبة_المركزي")
+        عرض_مصدر_المدخل("نسبة_تمويل_المركزي", "نسبة تمويل المركزي للعجز", نسبة_المركزي)
         نسبة_فائض = st.slider("نسبة الفائض تذهب للاحتياطي", 0.0, 1.0, float(d.get("نسبة_الفائض_للاحتياطي", 0.5)), 0.05, key=f"{widget_scope}:نسبة_فائض")
+        عرض_مصدر_المدخل("نسبة_الفائض_للاحتياطي", "نسبة الفائض تذهب للاحتياطي", نسبة_فائض)
 
     with st.expander("📈 التضخم والاستيراد", expanded=False):
         واردات = st.number_input("الواردات السنوية (مليار دولار)", value=float(d.get("واردات_سنوية_مليار_دولار", 74.0)), step=1.0, key=f"{widget_scope}:واردات")
+        عرض_مصدر_المدخل("واردات_سنوية_مليار_دولار", "الواردات السنوية (مليار دولار)", واردات)
         حصة_مستورد = st.slider("حصة السلع المستوردة في سلة المستهلك", 0.0, 1.0, float(d.get("حصة_المستورد_من_السلة", 0.40)), 0.05, key=f"{widget_scope}:حصة_مستورد")
+        عرض_مصدر_المدخل("حصة_المستورد_من_السلة", "حصة السلع المستوردة في سلة المستهلك", حصة_مستورد)
         تمرير = st.slider("معامل تمرير الصرف إلى الأسعار", 0.0, 1.0, float(d.get("معامل_تمرير_التضخم", 0.50)), 0.05, key=f"{widget_scope}:تمرير")
-
-# حماية من القوائم الفارغة
-if not اسعار:
-    اسعار = [60]
-if not اسعار_صرف:
-    اسعار_صرف = [رسمي]
+        عرض_مصدر_المدخل("معامل_تمرير_التضخم", "معامل تمرير الصرف إلى الأسعار", تمرير)
 
 p = مدخلات(
     اسعار_النفط=اسعار,
@@ -800,6 +870,15 @@ def عرض_حداثة_البيانات():
 
 
 عرض_حداثة_البيانات()
+
+input_audit_df = pd.DataFrame(input_audit)
+official_count = sum(row["التصنيف"] == "رسمي" for row in input_audit)
+manual_count = sum(row["التصنيف"] == "معدّل يدويًا" for row in input_audit)
+with st.expander(f"مصادر مدخلات السيناريو · {official_count} رسمية · {manual_count} معدّلة يدويًا"):
+    st.caption("التصنيف يخص القيمة المستخدمة الآن. الفترة والرابط يصفان المرجع الأصلي، حتى بعد تعديله. الوحدات موضحة في الجدول؛ الحصص والمعاملات كسور من 0 إلى 1.")
+    st.dataframe(input_audit_df, hide_index=True, width="stretch",
+                 column_config={"رابط المصدر المرجعي": st.column_config.LinkColumn("المصدر", display_text="فتح النشرة")})
+    st.caption("العجز ومؤشر الاستقرار والتضخم المتوقع نتائج محسوبة من هذه المدخلات، وليست بيانات رسمية منشورة.")
 
 سعر_متوسط = sorted(اسعار)[len(اسعار) // 2]
 ملخص = ملخص_السيناريو(p, p.سعر_الصرف_الرسمي)
@@ -1652,6 +1731,7 @@ with tab_deep:
                 df_fx_all.to_excel(writer, sheet_name="حسب سعر الصرف", index=False)
                 mat.to_excel(writer, sheet_name="مصفوفة الحساسية")
                 pd.DataFrame([ملخص]).to_excel(writer, sheet_name="الملخص", index=False)
+                input_audit_df.to_excel(writer, sheet_name="مصادر المدخلات", index=False)
             st.download_button(
                 "⬇️ تنزيل كافة النتائج (Excel)",
                 data=buffer.getvalue(),

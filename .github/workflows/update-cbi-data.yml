@@ -12,6 +12,8 @@ on:
       - 'sync_cbi_data.py'
       - 'cbi_data.py'
       - 'test_cbi_data.py'
+      - 'input_provenance.py'
+      - 'test_input_provenance.py'
       - 'requirements.txt'
 
 permissions:
@@ -36,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
       - name: Verify parser and last-good-data protection
-        run: python -m unittest test_cbi_data -v
+        run: python -m unittest test_cbi_data test_input_provenance -v
       - name: Check the official CBI bulletin
         id: sync
         continue-on-error: true

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from extract_cbi_data import RESERVES, M0, FX, IMPORTS, ANNUAL_NAMES, EXPENSE, CURRENT
+from input_provenance import official_inputs
 
 LATEST_SCENARIO = 'أحدث بيانات فعلية — البنك المركزي'
 
@@ -37,29 +37,14 @@ def load_data(directory):
 def latest_preset(snapshot, base):
     """Stocks use the newest complete month; annual flows use completed years only."""
     config = deepcopy(base)
-    p = snapshot['periods']['monetary']
-    metrics = snapshot['indicators']
-    fiscal = snapshot['fiscal_annual'][-1]
-    config.update({
-        'الاحتياطيات_الاجنبية_مليار': metrics[RESERVES][p],
-        'النقد_القاعدي_مليار': metrics[M0][p],
-        'سعر_الصرف_الرسمي': metrics[FX][p],
-        'اجمالي_النفقات_مليار': fiscal[ANNUAL_NAMES[EXPENSE]],
-        'النفقات_الجارية_مليار': fiscal[ANNUAL_NAMES[CURRENT]],
-    })
-    if config['النفقات_الجارية_مليار'] is None:
-        raise ValueError('Latest completed fiscal year has no current expenditure value')
-    import_years = {year: values for year, values in snapshot['annual_indicators'][IMPORTS].items()
-                    if values is not None}
-    if not import_years:
-        raise ValueError('No completed year of import data')
-    imports_year = max(import_years)
-    config['واردات_سنوية_مليار_دولار'] = import_years[imports_year] / 1000
-    config['اسعار_الصرف_سيناريو'] = sorted(set(config['اسعار_الصرف_سيناريو'] + [metrics[FX][p]]))
+    sources = official_inputs(snapshot)
+    config.update({field: source['value'] for field, source in sources.items()})
+    config['اسعار_الصرف_سيناريو'] = sorted(set(config['اسعار_الصرف_سيناريو'] + [config['سعر_الصرف_الرسمي']]))
     config['وصف'] = (
-        f"الاحتياطي والنقد والصرف: {p}. الإنفاق السنوي: {fiscal['السنة']}. "
-        f"الواردات السنوية: {imports_year}. بقية المدخلات افتراضات قابلة للتعديل؛ "
-        "لا تُحوّل الأرقام الشهرية التراكمية إلى إنفاق سنوي."
+        f"الاحتياطي والنقد والصرف: {sources['سعر_الصرف_الرسمي']['period']}. "
+        f"الإنفاق السنوي: {sources['اجمالي_النفقات_مليار']['period']}. "
+        f"الواردات السنوية: {sources['واردات_سنوية_مليار_دولار']['period']}. "
+        "بقية المدخلات افتراضات قابلة للتعديل؛ لا تُحوّل الأرقام الشهرية التراكمية إلى إنفاق سنوي."
     )
     return config
 
