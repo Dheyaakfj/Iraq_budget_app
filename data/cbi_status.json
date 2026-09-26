@@ -1,0 +1,21 @@
+{
+  "last_checked_at": "2026-09-26T21:01:05+00:00",
+  "last_success_at": "2026-09-26T21:01:05+00:00",
+  "last_updated_at": "2026-09-26T21:01:05+00:00",
+  "status": "updated",
+  "page_url": "https://cbi.iq/page/122",
+  "file_url": "https://cbi.iq/static/uploads/up/file-179015939752236.xlsx",
+  "periods": {
+    "monetary": "2026-07",
+    "fiscal": "2026-06",
+    "annual_budget": "2025"
+  },
+  "warnings": [
+    {
+      "sheet": "المؤشرات الاقتصادية",
+      "column": 11,
+      "source_header": "2027-06-30 00:00:00",
+      "reason": "future_period_excluded"
+    }
+  ]
+}
