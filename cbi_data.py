@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from input_provenance import official_inputs
+from reported_inputs import REPORTED_INPUTS, PARALLEL_AFTER_DECISION, supersedes
 
 LATEST_SCENARIO = 'أحدث بيانات فعلية — البنك المركزي'
 
@@ -39,11 +40,23 @@ def latest_preset(snapshot, base):
     config = deepcopy(base)
     sources = official_inputs(snapshot)
     config.update({field: source['value'] for field, source in sources.items()})
+    fx = REPORTED_INPUTS['سعر_الصرف_الرسمي']
+    fx_from_decision = supersedes(fx, sources['سعر_الصرف_الرسمي']['period'])
+    if fx_from_decision:
+        config['سعر_الصرف_الرسمي'] = fx['value']
+        config['سعر_الصرف_الموازي'] = PARALLEL_AFTER_DECISION
+    exports = REPORTED_INPUTS['صادرات_مقاسة_مليون_برميل_يوم']
+    config['صادرات_مقاسة_مليون_برميل_يوم'] = exports['value']
     config['اسعار_الصرف_سيناريو'] = sorted(set(config['اسعار_الصرف_سيناريو'] + [config['سعر_الصرف_الرسمي']]))
+    cbi_fx = sources['سعر_الصرف_الرسمي']
+    fx_note = (f"الصرف الرسمي: قرار مجلس الوزراء 544، {fx['period']} (بدل {cbi_fx['value']:g} في النشرة). "
+               if fx_from_decision else f"الصرف: {cbi_fx['period']}. ")
     config['وصف'] = (
-        f"الاحتياطي والنقد والصرف: {sources['سعر_الصرف_الرسمي']['period']}. "
+        f"الاحتياطي والنقد: {cbi_fx['period']}. "
+        f"{fx_note}"
         f"الإنفاق السنوي: {sources['اجمالي_النفقات_مليار']['period']}. "
         f"الواردات السنوية: {sources['واردات_سنوية_مليار_دولار']['period']}. "
+        f"الصادرات: تصريح وزارة النفط، {exports['period']}. "
         "بقية المدخلات افتراضات قابلة للتعديل؛ لا تُحوّل الأرقام الشهرية التراكمية إلى إنفاق سنوي."
     )
     return config

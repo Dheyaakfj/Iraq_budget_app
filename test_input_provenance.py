@@ -60,7 +60,50 @@ class ProvenanceTests(unittest.TestCase):
     def test_defaults_and_source_annotations_share_exact_values(self):
         config = latest_preset(self.snapshot, {'اسعار_الصرف_سيناريو': [1300, 1400]})
         for field, source in self.sources.items():
+            if field == 'سعر_الصرف_الرسمي':
+                continue  # يسبقه قرار مجلس الوزراء الأحدث؛ يغطيه الاختبار التالي
             self.assertEqual(config[field], source['value'])
+
+    def test_cabinet_decision_supersedes_only_an_older_cbi_period(self):
+        from reported_inputs import REPORTED_INPUTS, PARALLEL_AFTER_DECISION, supersedes
+        fx = REPORTED_INPUTS['سعر_الصرف_الرسمي']
+        self.assertEqual(self.official['period'], '2026-07')
+        self.assertTrue(supersedes(fx, '2026-07'))
+        self.assertFalse(supersedes(fx, '2026-10'))   # نشرة تغطي شهر القرار: الرقم المنشور فيها يسبق
+        self.assertFalse(supersedes(fx, '2026-11'))
+        config = latest_preset(self.snapshot, {'اسعار_الصرف_سيناريو': [1300, 1400]})
+        self.assertEqual(config['سعر_الصرف_الرسمي'], 1520.0)
+        self.assertEqual(config['سعر_الصرف_الموازي'], PARALLEL_AFTER_DECISION)
+        self.assertGreater(config['سعر_الصرف_الموازي'], config['سعر_الصرف_الرسمي'])  # فجوة موجبة
+        self.assertIn(1520.0, config['اسعار_الصرف_سيناريو'])
+        self.assertIn('544', config['وصف'])
+        ok = describe_input(1520.0, 1520.0, reported=fx)
+        self.assertEqual((ok['kind'], ok['period']), ('reported', '2026-10-07'))
+        self.assertEqual(describe_input(1300.0, 1300.0, reported=fx)['kind'], 'manual')
+
+    def test_reported_input_is_not_stamped_cbi_official(self):
+        from reported_inputs import REPORTED_INPUTS
+        ref = REPORTED_INPUTS['صادرات_مقاسة_مليون_برميل_يوم']
+        self.assertNotIn('صادرات_مقاسة_مليون_برميل_يوم', self.sources)
+        ok = describe_input(ref['value'], ref['value'], reported=ref)
+        edited = describe_input(1.5, ref['value'], reported=ref)
+        self.assertEqual((ok['kind'], ok['label']), ('reported', 'تصريح رسمي'))
+        self.assertEqual(ok['period'], ref['period'])
+        self.assertEqual(edited['kind'], 'manual')
+        self.assertEqual(edited['reference'], ref['value'])
+        # preset stale vs the sourced reference must not be stamped as reported
+        self.assertEqual(describe_input(1.5, 1.5, reported=ref)['kind'], 'manual')
+        row = audit_row('الصادرات', ok, 'مليون برميل/يوم')
+        self.assertIn('وزارة النفط', row['أصل المرجع'])
+        self.assertEqual(row['التصنيف'], 'تصريح رسمي')
+
+    def test_latest_preset_carries_reported_exports_with_period(self):
+        from reported_inputs import REPORTED_INPUTS
+        ref = REPORTED_INPUTS['صادرات_مقاسة_مليون_برميل_يوم']
+        config = latest_preset(self.snapshot, {
+            'اسعار_الصرف_سيناريو': [1300.0], 'سعر_الصرف_الرسمي': 1300.0, 'وصف': ''})
+        self.assertEqual(config['صادرات_مقاسة_مليون_برميل_يوم'], ref['value'])
+        self.assertIn(ref['period'], config['وصف'])
 
 
 if __name__ == '__main__':
