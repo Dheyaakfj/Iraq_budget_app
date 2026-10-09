@@ -10,11 +10,14 @@ from html import escape
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from cbi_data import load_data, latest_preset, data_signature, LATEST_SCENARIO
-from input_provenance import describe_input, format_value, audit_row, INPUT_UNITS, official_inputs
+from input_provenance import describe_input, format_value, audit_row, INPUT_UNITS, official_inputs, same_value
+from reported_inputs import REPORTED_INPUTS, age_days, is_stale, supersedes
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
+
+import ui_kit as ui
 
 from scenario_engine_ar import (
     مدخلات,
@@ -47,484 +50,15 @@ st.set_page_config(
     initial_sidebar_state="auto",
 )
 
-# لوحة ألوان
-PRIMARY = "#0E6E5C"      # أخضر نفطي
-ACCENT = "#C8A042"       # ذهبي
-DANGER = "#C2392F"       # أحمر (عجز)
-INK = "#16302B"          # داكن
-MUTED = "#6b7c78"
+# لوحة ألوان موحّدة مصدرها ui_kit، كي لا تتفرّع الألوان بين الواجهة والرسوم
+PRIMARY = ui.PRIMARY
+ACCENT = ui.ACCENT
+DANGER = ui.DANGER
+INK = ui.INK
+MUTED = ui.MUTED
+COLORWAY = ui.COLORWAY
 
-PLOTLY_TEMPLATE = "plotly_white"
-COLORWAY = [PRIMARY, ACCENT, DANGER, "#2E86AB", "#8E6C8A", "#5B8C5A"]
-
-st.markdown(
-    f"""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap');
-
-html, body, .stApp, .main, [data-testid="stAppViewContainer"], .stMarkdown, .stMetric, .stCaption, p, span, h1, h2, h3, h4, h5, h6, label {{
-    direction: rtl;
-    text-align: right;
-    font-family: 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Tahoma, sans-serif;
-    -webkit-font-smoothing: antialiased;
-}}
-
-[dir="ltr"], .ltr-text {{
-    direction: ltr !important;
-    unicode-bidi: isolate !important;
-    text-align: left !important;
-    display: inline-block !important;
-}}
-
-/* خلفية الصفحة وإزالة الفراغات الزائدة */
-.stApp {{
-    background-color: #F8FAF9;
-}}
-.block-container {{
-    max-width: 1340px !important;
-    padding-top: 4.5rem !important;
-    padding-bottom: 2.5rem !important;
-}}
-
-/* رأس الصفحة التنفيذي الموحد (Executive Header) */
-.app-header {{
-    background: #094F42;
-    border-radius: 16px;
-    padding: 24px 28px;
-    color: #ffffff;
-    margin-bottom: 12px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 16px;
-}}
-.app-title-row {{
-    display: flex;
-    align-items: center;
-    gap: 14px;
-}}
-.app-logo {{
-    flex-shrink: 0;
-    background: rgba(255, 255, 255, 0.14);
-    width: 48px;
-    height: 48px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 12px;
-}}
-.app-header .app-title {{
-    margin: 0;
-    padding: 0;
-    font-size: 28px;
-    font-weight: 700;
-    color: #ffffff;
-    letter-spacing: -0.01em;
-}}
-.app-subtitle {{
-    margin: 6px 0 0;
-    font-size: 14px;
-    line-height: 1.7;
-    color: rgba(255, 255, 255, 0.88);
-}}
-.app-header-meta {{
-    display: flex;
-    align-items: center;
-    gap: 10px 16px;
-    flex-wrap: wrap;
-    background: #ffffff;
-    border: 1px solid #E2E8E5;
-    border-radius: 12px;
-    padding: 12px 16px;
-    margin-bottom: 20px;
-}}
-.market-quotes {{
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 16px;
-}}
-.live-ticker-chip {{
-    font-size: 13px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: {INK};
-}}
-.live-ticker-chip.secondary {{
-    color: #536860;
-}}
-.scenario-badge {{
-    flex: 1 1 280px;
-    min-width: 0;
-    font-size: 13px;
-    line-height: 1.7;
-    color: {INK};
-}}
-.meta-label {{ color: #536860; font-size: 12px; }}
-.market-status {{ color: #536860; font-size: 12px; }}
-.ticker-change.pos {{ color: {PRIMARY}; font-weight: 600; }}
-.ticker-change.neg {{ color: {DANGER}; font-weight: 600; }}
-
-/* شبكة بطاقات المؤشرات المتجاوبة (Responsive KPI Grid) */
-.kpi-grid {{
-    display: grid;
-    grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    margin-bottom: 24px;
-}}
-.kpi-card {{
-    background: #ffffff;
-    border: 1px solid #E2E8E5;
-    border-radius: 14px;
-    padding: 18px 20px;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-}}
-.kpi-card-hero {{
-    grid-row: span 2;
-    border-right: 4px solid {PRIMARY};
-    background: #F0F8F5;
-    padding: 22px 24px;
-    gap: 12px;
-}}
-.kpi-card-hero.deficit {{
-    border-right-color: {DANGER};
-    background: #FFF6F3;
-}}
-.kpi-card-hero .kpi-value {{
-    font-size: clamp(36px, 3.5vw, 48px);
-    color: {PRIMARY};
-}}
-.kpi-card-hero.deficit .kpi-value {{ color: {DANGER}; }}
-.kpi-card-hero .kpi-unit {{ font-size: 15px; }}
-.kpi-context, .kpi-explanation {{
-    font-size: 13px;
-    line-height: 1.8;
-    color: #536860;
-}}
-.kpi-card-hero .kpi-footer {{
-    display: flex;
-    border-top: 1px solid #E4DCD6;
-    padding-top: 12px;
-    gap: 8px 16px;
-    flex-wrap: wrap;
-}}
-.kpi-header {{
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 6px;
-}}
-.kpi-label {{
-    font-size: 13px;
-    font-weight: 500;
-    color: #556964;
-}}
-.kpi-value {{
-    font-size: 24px;
-    font-weight: 700;
-    color: {INK};
-    line-height: 1.25;
-    font-variant-numeric: tabular-nums;
-}}
-.kpi-unit {{
-    font-size: 13px;
-    font-weight: 500;
-    color: #6b7c78;
-}}
-.kpi-footer {{
-    font-size: 13px;
-    color: #536860;
-    line-height: 1.7;
-    margin-top: 6px;
-}}
-.kpi-chip {{
-    font-size: 12px;
-    padding: 2px 8px;
-    border-radius: 12px;
-    background: #eef2f1;
-    color: #3e504c;
-    font-weight: 600;
-}}
-.kpi-badge {{
-    font-size: 13px;
-    padding: 3px 10px;
-    border-radius: 12px;
-    font-weight: 600;
-}}
-.kpi-badge.surplus {{
-    background: #e6f4f1;
-    color: {PRIMARY};
-}}
-.kpi-badge.deficit {{
-    background: #fdeee9;
-    color: {DANGER};
-}}
-
-/* تصميم التبويبات الرئيسي (Pill Tabs) */
-.stTabs [role="tablist"] {{
-    gap: 8px;
-    border-bottom: 1px solid #E6ECE9;
-    padding-bottom: 4px;
-    margin-bottom: 16px;
-}}
-.stTabs [role="tab"] {{
-    background: transparent;
-    border-radius: 10px;
-    padding: 8px 18px;
-    font-weight: 600;
-    font-size: 14.5px;
-    color: #526360;
-    border: 1px solid transparent;
-    transition: all 0.18s ease;
-    min-height: 44px;
-    flex-shrink: 0;
-}}
-.stTabs [role="tab"] p {{
-    font-size: inherit;
-    font-weight: inherit;
-}}
-.stTabs [role="tab"]:focus-visible {{
-    outline: 2px solid {PRIMARY};
-    outline-offset: 2px;
-}}
-.stTabs .react-aria-SelectionIndicator {{
-    display: none;
-}}
-.stTabs [role="tab"]:hover {{
-    background: #EFF4F2;
-    color: {PRIMARY};
-}}
-.stTabs [aria-selected="true"] {{
-    background: {PRIMARY} !important;
-    color: #FFFFFF !important;
-}}
-
-/* التبويبات الفرعية الداخلية (Sub-tabs) */
-.stTabs .stTabs [role="tablist"] {{
-    border-bottom: 1px solid #E2E8E5;
-    gap: 6px;
-    margin-bottom: 14px;
-}}
-.stTabs .stTabs [role="tab"] {{
-    font-size: 13px !important;
-    padding: 6px 14px !important;
-    border-radius: 8px !important;
-    background: #F0F4F2 !important;
-    color: #374744 !important;
-}}
-.stTabs .stTabs [aria-selected="true"] {{
-    background: #2E86AB !important;
-    color: #FFFFFF !important;
-    box-shadow: 0 2px 6px rgba(46, 134, 171, 0.2) !important;
-}}
-
-/* ======================================================================
-   إصلاح حاسم: معالجة الشريط الجانبي في وضع RTL على الحاسبة والموبايل
-   ====================================================================== */
-
-/* إخفاء تام وشامل للشريط الجانبي عند الطي لمنع تسرب النصوص كعمود رأسي */
-section[data-testid="stSidebar"][aria-expanded="false"],
-section[data-testid="stSidebar"][aria-expanded="false"] > div,
-section[data-testid="stSidebar"][aria-expanded="false"] * {{
-    display: none !important;
-    visibility: hidden !important;
-    width: 0 !important;
-    min-width: 0 !important;
-    max-width: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: none !important;
-    overflow: hidden !important;
-    opacity: 0 !important;
-    pointer-events: none !important;
-}}
-
-section[data-testid="stSidebar"][aria-expanded="false"] {{
-    transform: translateX(120%) !important;
-}}
-
-/* إخفاء مقبض تغيير الحجم عند الطي */
-section[data-testid="stSidebar"][aria-expanded="false"] + [data-testid="stSidebarResizeHandle"],
-[data-testid="stSidebarResizeHandle"] {{
-    display: none !important;
-}}
-
-/* عندما يكون الشريط الجانبي مفتوحاً */
-section[data-testid="stSidebar"] {{
-    direction: rtl;
-    background-color: #ffffff;
-    border-left: 1px solid #E6ECE9;
-    box-shadow: -2px 0 14px rgba(14, 110, 92, 0.05);
-    overflow-x: hidden !important;
-}}
-section[data-testid="stSidebar"] * {{
-    text-align: right;
-    font-family: 'IBM Plex Sans Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', Tahoma, sans-serif;
-}}
-[data-testid="stIconMaterial"],
-section[data-testid="stSidebar"] [data-testid="stIconMaterial"] {{
-    font-family: 'Material Symbols Rounded' !important;
-    direction: ltr;
-}}
-
-/* زر استعادة الشريط الجانبي عند الطي */
-[data-testid="stSidebarCollapsedControl"] {{
-    background-color: #ffffff !important;
-    border-radius: 8px !important;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
-    border: 1px solid #E2E8E5 !important;
-    color: {PRIMARY} !important;
-}}
-
-/* مصدر المدخل؛ نص صريح مع لون مساعد */
-.input-origin {{
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 6px;
-    margin-top: -10px;
-    margin-bottom: 2px;
-    color: #536860;
-    font-size: 12px;
-    line-height: 1.7;
-}}
-.input-origin .origin-badge {{
-    border-radius: 6px;
-    padding: 1px 7px;
-    font-weight: 600;
-    background: #EEF2F1;
-    color: #435952;
-}}
-.input-origin.official .origin-badge {{ background: #E6F4EF; color: #0A604B; }}
-.input-origin.manual .origin-badge {{ background: #FFF1D6; color: #805200; }}
-.input-origin a {{ color: #0A604B; text-decoration: underline; text-underline-offset: 3px; }}
-
-/* صناديق الملاحظات والتنبيه */
-.note {{
-    background: #fbf8f0;
-    border-right: 4px solid {ACCENT};
-    padding: 11px 16px;
-    border-radius: 10px;
-    font-size: 13px;
-    color: #4a3e20;
-    margin-bottom: 14px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-}}
-
-/* بطاقات التوصيات */
-.policy-card {{
-    border-radius: 10px;
-    padding: 14px 18px;
-    margin-bottom: 12px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-}}
-
-/* ===== التجاوب التام مع الشاشات والموبايل ===== */
-@media (max-width: 992px) {{
-    .kpi-grid {{
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }}
-    .kpi-card-hero {{
-        grid-column: 1 / -1;
-        grid-row: auto;
-    }}
-}}
-
-@media (max-width: 680px) {{
-    .block-container {{
-        padding-top: 4.5rem !important;
-        padding-left: 0.5rem !important;
-        padding-right: 0.5rem !important;
-    }}
-    .app-header {{
-        padding: 14px 16px;
-        border-radius: 14px;
-        gap: 12px;
-    }}
-    .app-header .app-title {{ font-size: 22px; }}
-    .app-subtitle {{ font-size: 13px; }}
-    .app-title-row {{ gap: 10px; }}
-    .app-logo {{ width: 38px; height: 38px; }}
-    .app-header-meta {{ padding: 12px; }}
-    .market-quotes {{ gap: 8px 12px; }}
-
-    /* تحويل بطاقات المؤشرات إلى شبكة مريحة في الموبايل */
-    .kpi-grid {{
-        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-        gap: 8px !important;
-        margin-bottom: 14px !important;
-    }}
-    .kpi-card-hero {{
-        grid-column: span 2 !important;
-    }}
-    .kpi-card {{
-        padding: 14px 12px;
-        border-radius: 12px !important;
-    }}
-    .kpi-value {{ font-size: 24px; }}
-    .kpi-card-hero {{ padding: 18px; }}
-    .kpi-card-hero .kpi-value {{ font-size: 38px; }}
-    .kpi-label {{ font-size: 13px; }}
-    .kpi-footer {{ font-size: 12px; }}
-
-    /* التبويبات في الموبايل */
-    .stTabs [role="tablist"] {{
-        overflow-x: auto;
-        flex-wrap: nowrap;
-        gap: 4px;
-    }}
-    .stTabs [role="tab"] {{
-        padding: 6px 8px;
-        font-size: 13px;
-        white-space: nowrap;
-    }}
-
-    /* الأعمدة تتكثف بمرونة */
-    [data-testid="stHorizontalBlock"] {{
-        flex-wrap: wrap !important;
-        gap: 10px !important;
-    }}
-    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"],
-    [data-testid="stHorizontalBlock"] > [data-testid="column"] {{
-        flex: 1 1 100% !important;
-        width: 100% !important;
-        min-width: 100% !important;
-    }}
-}}
-
-/* ===== أنماط الطباعة الرسمية (PDF Export) ===== */
-@media print {{
-    section[data-testid="stSidebar"],
-    header, footer, [data-testid="stToolbar"] {{
-        display: none !important;
-    }}
-    .block-container {{
-        padding: 0 !important;
-        max-width: 100% !important;
-    }}
-    .app-header {{
-        background: #0E6E5C !important;
-        color: #ffffff !important;
-        box-shadow: none !important;
-        page-break-after: avoid;
-    }}
-    .kpi-card, .policy-card {{
-        box-shadow: none !important;
-        border: 1px solid #ccc !important;
-        page-break-inside: avoid;
-    }}
-}}
-</style>
-""",
-    unsafe_allow_html=True,
-)
+ui.inject_theme()
 
 
 def kpi_card(label, value, sub="", tone="ink"):
@@ -552,25 +86,9 @@ def fmt_trln_html(x):
     return f"{val:,.1f} ترليون"
 
 
-def style_fig(fig, height=360):
-    fig.update_layout(
-        template=PLOTLY_TEMPLATE,
-        colorway=COLORWAY,
-        height=height,
-        margin=dict(l=10, r=10, t=40, b=15),
-        font=dict(family="IBM Plex Sans Arabic, Segoe UI, sans-serif", size=12),
-        title_x=0.5,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            x=0.5,
-            xanchor="center",
-            font=dict(size=11),
-        ),
-        hoverlabel=dict(font_family="IBM Plex Sans Arabic", font_size=12),
-    )
-    return fig
+def style_fig(fig, height=360, show_legend=True, y_title=""):
+    """يفوّض إلى نظام التصميم؛ يبقى الاسم كما هو حتى لا تتغيّر مواضع الاستدعاء."""
+    return ui.style_chart(fig, height=height, show_legend=show_legend, y_title=y_title)
 
 
 # ----------------------------------------------------------------------
@@ -613,14 +131,18 @@ input_audit = []
 
 
 def عرض_مصدر_المدخل(field, label, value):
-    baseline = d.get(field, next(iter(السيناريوهات_المسبقة.values()))[field])
+    reported = REPORTED_INPUTS.get(field)
+    if reported is not None and field in d and not same_value(d[field], reported["value"]):
+        reported = None  # السيناريو يعلن قيمة أخرى (تاريخية)؛ لا يُنسب إليها التصريح
+    baseline = d.get(field, reported["value"] if reported else next(iter(السيناريوهات_المسبقة.values()))[field])
     detail = describe_input(value, baseline, input_sources.get(field),
-                            historical=سيناريو_مختار in السيناريوهات_المسبقة)
+                            historical=سيناريو_مختار in السيناريوهات_المسبقة, reported=reported)
     input_audit.append(audit_row(label, detail, INPUT_UNITS[field]))
     parts = [f'<span class="origin-badge">{detail["label"]}</span>']
-    if detail["origin"] == "official":
+    if detail["origin"] in ("official", "reported"):
         parts.append(f'<bdi dir="ltr">{escape(detail["period"])}</bdi>')
-        link_text = "المرجع الرسمي" if detail["kind"] == "manual" else "البنك المركزي"
+        جهة = "البنك المركزي" if detail["origin"] == "official" else (reported or {}).get("link_label", "المصدر")
+        link_text = "المرجع الرسمي" if detail["kind"] == "manual" else جهة
         parts.append(f'<a href="{escape(detail["source_url"], quote=True)}" target="_blank" rel="noopener noreferrer">{link_text}</a>')
     elif detail["origin"] == "reference":
         parts.append('<span>قيمة ثابتة للسيناريو</span>')
@@ -656,6 +178,9 @@ with st.sidebar:
     revision = بيانات_المركزي.get("snapshot", {}).get("source", {}).get("sha256", "") if سيناريو_مختار == LATEST_SCENARIO else ""
     widget_scope = f"inputs:{سيناريو_مختار}:{revision}"
     input_sources = official_inputs(بيانات_المركزي["snapshot"]) if سيناريو_مختار == LATEST_SCENARIO else {}
+    _صرف_نشرة = input_sources.get("سعر_الصرف_الرسمي")
+    if _صرف_نشرة and supersedes(REPORTED_INPUTS["سعر_الصرف_الرسمي"], _صرف_نشرة["period"]):
+        input_sources.pop("سعر_الصرف_الرسمي")  # قرار مجلس الوزراء أحدث من فترة النشرة
     st.caption("رسمي: قيمة من النشرة مع فترتها ومصدرها. افتراض: اختيار للنموذج. تعديل القيمة الرسمية يجعلها معدّلة يدويًا.")
 
     with st.expander("🛢️ النفط والإنتاج والتكاليف", expanded=True):
@@ -669,26 +194,51 @@ with st.sidebar:
             اسعار = [60]
             st.caption("لم تُحدد قيم؛ تُستخدم القيمة الاحتياطية الموضحة في سجل المدخلات.")
         عرض_مصدر_المدخل("اسعار_النفط", "أسعار النفط (دولار/برميل)", اسعار)
+        _صادرات_مرجعية = REPORTED_INPUTS["صادرات_مقاسة_مليون_برميل_يوم"]
+        _مقاسة_السيناريو = d.get("صادرات_مقاسة_مليون_برميل_يوم")
+        استخدم_مقاسة = st.toggle(
+            "استخدام الصادرات المقاسة بدل (الإنتاج − الاستهلاك)",
+            value=_مقاسة_السيناريو is not None,
+            help="الإيرادات النفطية تُحسب على الصادرات الفعلية المعلنة. الإنتاج والاستهلاك يُهملان حين يُفعَّل.",
+            key=f"{widget_scope}:استخدم_مقاسة",
+        )
+        صادرات_مقاسة = None
+        if استخدم_مقاسة:
+            صادرات_مقاسة = st.number_input(
+                "الصادرات المقاسة (مليون برميل/يوم)",
+                min_value=0.0,
+                value=float(_مقاسة_السيناريو if _مقاسة_السيناريو is not None else _صادرات_مرجعية["value"]),
+                step=0.05,
+                help="صافي ما يُصدَّر فعلياً، وهو صافٍ أصلاً من استهلاك المصافي المحلية.",
+                key=f"{widget_scope}:صادرات_مقاسة",
+            )
+            عرض_مصدر_المدخل("صادرات_مقاسة_مليون_برميل_يوم", "الصادرات المقاسة (مليون برميل/يوم)", صادرات_مقاسة)
+            if is_stale(_صادرات_مرجعية):
+                st.warning(f"المرجع الرسمي للتصدير عمره {age_days(_صادرات_مرجعية)} يوماً. حدّثه قبل الاعتماد على الإيرادات.")
+            st.caption(f"ملاحظة المرجع: {_صادرات_مرجعية['note']}")
+        _لاحقة = " (غير مستخدم)" if استخدم_مقاسة else ""
         انتاج = st.number_input(
             "حجم الإنتاج الكلي (مليون برميل/يوم)",
             value=float(d.get("حجم_الصادرات_مليون_برميل_يوم", 4.2)),
             step=0.1,
             help="إجمالي إنتاج النفط الخام في العراق (عادة بين 4.0 و 4.3 م ب/ي)",
+            disabled=استخدم_مقاسة,
             key=f"{widget_scope}:انتاج",
         )
-        عرض_مصدر_المدخل("حجم_الصادرات_مليون_برميل_يوم", "حجم الإنتاج الكلي (مليون برميل/يوم)", انتاج)
+        عرض_مصدر_المدخل("حجم_الصادرات_مليون_برميل_يوم", "حجم الإنتاج الكلي (مليون برميل/يوم)" + _لاحقة, انتاج)
         محلي = st.number_input(
             "الاستهلاك المحلي للمصافي (مليون برميل/يوم)",
             value=float(d.get("الاستهلاك_المحلي_مليون_برميل_يوم", 0.8)),
             step=0.1,
             help="النفط الخام الموجه للمصافي المحلية ومحطات الكهرباء",
+            disabled=استخدم_مقاسة,
             key=f"{widget_scope}:محلي",
         )
-        عرض_مصدر_المدخل("الاستهلاك_المحلي_مليون_برميل_يوم", "الاستهلاك المحلي للمصافي (مليون برميل/يوم)", محلي)
+        عرض_مصدر_المدخل("الاستهلاك_المحلي_مليون_برميل_يوم", "الاستهلاك المحلي للمصافي (مليون برميل/يوم)" + _لاحقة, محلي)
         حصة = st.slider("حصة الحكومة من الصادرات", 0.0, 1.0, float(d.get("حصة_الحكومة_من_الصادرات", 1.0)), 0.05, key=f"{widget_scope}:حصة")
         عرض_مصدر_المدخل("حصة_الحكومة_من_الصادرات", "حصة الحكومة من الصادرات", حصة)
 
-        صافي_تصدير_يومي = max(انتاج - محلي, 0.0) * حصة
+        صافي_تصدير_يومي = (صادرات_مقاسة if صادرات_مقاسة is not None else max(انتاج - محلي, 0.0)) * حصة
         st.caption(f"🔹 صافي التصدير الحكومي: **{صافي_تصدير_يومي:.2f}** مليون برميل/يوم ({صافي_تصدير_يومي * 365:.1f} مليون برميل سنوياً)")
 
         خصم_بصرة = st.number_input(
@@ -764,6 +314,7 @@ p = مدخلات(
     اسعار_النفط=اسعار,
     حجم_الصادرات_مليون_برميل_يوم=انتاج,
     الاستهلاك_المحلي_مليون_برميل_يوم=محلي,
+    صادرات_مقاسة_مليون_برميل_يوم=صادرات_مقاسة,
     حصة_الحكومة_من_الصادرات=حصة,
     ايام_السنة=365,
     سعر_الصرف_الرسمي=float(رسمي),
@@ -802,40 +353,19 @@ market_change_html = (
     if as3ar_sooq["متاح"] else ""
 )
 
-st.markdown(
-    f"""
-    <div class="app-header">
-        <div class="app-title-row">
-            <span class="app-logo" aria-hidden="true">
-                <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M5 22V16M14 22V10M23 22V5" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-                    <path d="M4 10L13 4H21" stroke="#D8BE7D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </span>
-            <div>
-                <h1 class="app-title">مرصد الموازنة العراقية</h1>
-                <p class="app-subtitle">استكشف أثر النفط وسعر الصرف على الموازنة والاحتياطيات</p>
-            </div>
-        </div>
-    </div>
-    <div class="app-header-meta">
-        <div class="scenario-badge">
-            <span class="meta-label">السيناريو الحالي</span><br>
-            <strong>{p.اسم_السيناريو}</strong>
-        </div>
-        <div class="market-quotes">
-            <span class="market-status">{market_status}</span>
-            <div class="live-ticker-chip">
-                <span>برنت: <strong dir="ltr">${brent_val:.2f}</strong></span>
-                {market_change_html}
-            </div>
-            <div class="live-ticker-chip secondary">
-                <span>البصرة (تقديري): <strong dir="ltr">${basrah_val:.2f}</strong></span>
-            </div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
+ui.hero(
+    title="مرصد الموازنة العراقية",
+    subtitle=(
+        "منصّة تفاعلية تقيس أثر أسعار النفط وسعر صرف الدينار على الإيرادات والعجز "
+        "والاحتياطيات الأجنبية، اعتماداً على النشرة الرسمية للبنك المركزي العراقي."
+    ),
+    chips=[
+        ("خام برنت", f'<span dir="ltr">${brent_val:.2f}</span> {market_change_html}'),
+        ("خام البصرة التصديري", f'<span dir="ltr">${basrah_val:.2f}</span>'),
+        ("سعر الصرف الرسمي", f'<span dir="ltr">{p.سعر_الصرف_الرسمي:,.0f}</span> د/$'),
+        ("السيناريو الحالي", p.اسم_السيناريو),
+    ],
+    footnote=market_status,
 )
 
 
@@ -908,57 +438,62 @@ wage_tone = "pos" if (تع_رواتب and تع_رواتب < 55) else "neg"
 
 m0_cover = (p.الاحتياطيات_الاجنبية_مليار / p.النقد_القاعدي_مليار * 100.0) if p.النقد_القاعدي_مليار else 0.0
 
-st.markdown(
-    f"""
-    <div class="kpi-grid">
-        <div class="kpi-card kpi-card-hero {hero_class}">
-            <div class="kpi-header">
-                <span class="kpi-label">الرصيد المالي المقدّر</span>
-                <span class="kpi-badge {badge_class}">{status_text}</span>
-            </div>
-            <div class="kpi-context">عند نفط <span dir="ltr">{سعر_متوسط:g}</span> دولار · صرف <span dir="ltr">{p.سعر_الصرف_الرسمي:,.0f}</span> دينار/دولار</div>
-            <div class="kpi-value"><span dir="ltr">{رصيد / 1000:,.1f}</span> <span class="kpi-unit">ترليون دينار</span></div>
-            <div class="kpi-explanation">{balance_explanation}</div>
-            <div class="kpi-footer">
-                <span>إجمالي الإيرادات: {fmt_trln_html(صف_مرجعي['إجمالي الإيرادات (مليار دينار)'])}</span>
-                <span>النفقات: {fmt_trln_html(صف_مرجعي['النفقات (مليار دينار)'])}</span>
-            </div>
-        </div>
-        <div class="kpi-card">
-            <div class="kpi-header">
-                <span class="kpi-label">تعادل الموازنة</span>
-                <span class="kpi-chip">توازن كلي</span>
-            </div>
-            <div class="kpi-value"><span dir="ltr">{f'{تع:,.1f}' if تع else '—'}</span> <span class="kpi-unit">دولار/برميل</span></div>
-            <div class="kpi-footer">سعر النفط لتوازن كامل الإنفاق</div>
-        </div>
-        <div class="kpi-card">
-            <div class="kpi-header">
-                <span class="kpi-label">تعادل الرواتب</span>
-                <span class="kpi-chip">تأمين الرواتب</span>
-            </div>
-            <div class="kpi-value"><span dir="ltr">{f'{تع_رواتب:,.1f}' if تع_رواتب else '—'}</span> <span class="kpi-unit">دولار/برميل</span></div>
-            <div class="kpi-footer">لتغطية {fmt_trln_html(p.فاتورة_الرواتب_مليار)} رواتب</div>
-        </div>
-        <div class="kpi-card">
-            <div class="kpi-header">
-                <span class="kpi-label">فجوة سعر الصرف</span>
-                <span class="kpi-chip">فارق السعرين</span>
-            </div>
-            <div class="kpi-value"><span dir="ltr">{الفجوة_صرف:,.0f}</span> <span class="kpi-unit">دينار</span></div>
-            <div class="kpi-footer">فارق <span dir="ltr">{نسبة_فجوة_صرف:,.1f}%</span> فوق الرسمي</div>
-        </div>
-        <div class="kpi-card">
-            <div class="kpi-header">
-                <span class="kpi-label">الاحتياطيات الأجنبية</span>
-                <span class="kpi-chip">غطاء M0: <span dir="ltr">{m0_cover:,.0f}%</span></span>
-            </div>
-            <div class="kpi-value"><span dir="ltr">{p.الاحتياطيات_الاجنبية_مليار / 1000:,.1f}</span> <span class="kpi-unit">ترليون دينار</span></div>
-            <div class="kpi-footer">النقد القاعدي: {fmt_trln_html(p.النقد_القاعدي_مليار)}</div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
+ui.section(
+    eyebrow="نظرة عامة",
+    title="الوضع المالي عند السيناريو الحالي",
+    description=(
+        f"الأرقام محسوبة عند سعر نفط {سعر_متوسط:g} دولاراً للبرميل وسعر صرف رسمي "
+        f"{p.سعر_الصرف_الرسمي:,.0f} ديناراً للدولار. "
+        "غيّر الافتراضات من الشريط الجانبي لإعادة الحساب فوراً."
+    ),
+)
+
+ui.stat_strip([
+    {
+        "value": f"{رصيد / 1000:,.1f}",
+        "period": status_text,
+        "label": "الرصيد المالي المقدّر (ترليون دينار)",
+        "tone": "pos" if is_surplus else "neg",
+    },
+    {
+        "value": f"{تع:,.1f}" if تع else "—",
+        "period": "توازن كامل الإنفاق",
+        "label": "سعر تعادل الموازنة (دولار/برميل)",
+    },
+    {
+        "value": f"{تع_رواتب:,.1f}" if تع_رواتب else "—",
+        "period": "تأمين الرواتب فقط",
+        "label": "سعر تعادل الرواتب (دولار/برميل)",
+        "tone": wage_tone,
+    },
+    {
+        "value": f"{p.الاحتياطيات_الاجنبية_مليار / 1000:,.1f}",
+        "period": f"غطاء M0: {m0_cover:,.0f}%",
+        "label": "الاحتياطيات الأجنبية (ترليون دينار)",
+    },
+    {
+        "value": f"{الفجوة_صرف:,.0f}",
+        "period": f"فارق {نسبة_فجوة_صرف:,.1f}% فوق الرسمي",
+        "label": "فجوة سعر الصرف (دينار)",
+    },
+])
+
+نفقات_مرجعية = صف_مرجعي["النفقات (مليار دينار)"]
+نسبة_الرصيد = (abs(رصيد) / نفقات_مرجعية * 100.0) if نفقات_مرجعية else 0.0
+ui.narrative(
+    f"عند سعر نفط <strong><span dir=\"ltr\">{سعر_متوسط:g}</span> دولاراً للبرميل</strong>، "
+    f"تبلغ الإيرادات المقدّرة <strong>{fmt_trln_html(صف_مرجعي['إجمالي الإيرادات (مليار دينار)'])} دينار</strong> "
+    f"مقابل إنفاق <strong>{fmt_trln_html(نفقات_مرجعية)} دينار</strong>. {balance_explanation} "
+    f"يمثّل ذلك <strong><span dir=\"ltr\">{نسبة_الرصيد:,.1f}%</span></strong> من الإنفاق الكلي. "
+    + (
+        f"يحتاج التوازن الكامل إلى سعر نفط عند <strong><span dir=\"ltr\">{تع:,.1f}</span> دولاراً</strong>، "
+        if تع else ""
+    )
+    + (
+        f"بينما يكفي <strong><span dir=\"ltr\">{تع_رواتب:,.1f}</span> دولاراً</strong> "
+        "لتغطية فاتورة الرواتب والتقاعد وشبكة الحماية وحدها."
+        if تع_رواتب else ""
+    )
 )
 
 # ----------------------------------------------------------------------
@@ -1480,7 +1015,7 @@ with tab_policy:
         <div style="background: #ffffff; border: 1px solid #dbe2df; border-radius: 12px; padding: 20px 24px; margin-bottom: 22px; box-shadow: 0 1px 4px rgba(0,0,0,0.03);">
             <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eef1f0; padding-bottom: 12px; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
                 <h3 style="margin: 0; color: #0E6E5C; font-size: 19px;">📄 تقرير الاستدامة والسياسات: {p.اسم_السيناريو}</h3>
-                <span style="font-size: 13px; color: #6b7c78; background: #f4f6f5; padding: 4px 12px; border-radius: 6px;">
+                <span style="font-size: 13.5px; color: #435952; background: #eef2f1; padding: 4px 12px; border-radius: 6px;">
                     سعر النفط المرجعي: <strong>{سعر_متوسط}$</strong> | السعر الرسمي: <strong>{p.سعر_الصرف_الرسمي:,.0f}</strong>
                 </span>
             </div>
@@ -1501,22 +1036,24 @@ with tab_policy:
     st.subheader("💡 توصيات السياسة المالية والنقدية المقترحة")
     توصيات_ذكية = توليد_توصيات_السياسات(p, سعر_متوسط)
 
+    # (لون الحد، خلفية البطاقة، لون العنوان، خلفية الشارة). الشارة أغمق من الحد
+    # لأن نصها أبيض ويلزمه تباين 4.5:1 على الأقل.
     لون_أولوية = {
-        "حرجة": ("#C2392F", "#fdf2f2", "#c62828"),
-        "عالية": ("#C8A042", "#fffbf0", "#b78103"),
-        "متوسطة": ("#2E86AB", "#f0f8fd", "#0277bd"),
-        "استراتيجية": ("#0E6E5C", "#f0f8f6", "#0E6E5C"),
-        "منخفضة": ("#6b7c78", "#f9faf9", "#424242"),
+        "حرجة": ("#C2392F", "#fdf2f2", "#9E2A22", "#B3302A"),
+        "عالية": ("#C8A042", "#fffbf0", "#7A5600", "#8A6212"),
+        "متوسطة": ("#2E86AB", "#f0f8fd", "#0B5F80", "#1F6F8F"),
+        "استراتيجية": ("#0E6E5C", "#f0f8f6", "#0B5A4B", "#0E6E5C"),
+        "منخفضة": ("#6b7c78", "#f9faf9", "#3A3A3A", "#566863"),
     }
 
     for rec in توصيات_ذكية:
-        border_col, bg_col, text_col = لون_أولوية.get(rec["الأولوية"], ("#0E6E5C", "#f0f8f6", "#0E6E5C"))
+        border_col, bg_col, text_col, badge_col = لون_أولوية.get(rec["الأولوية"], ("#0E6E5C", "#f0f8f6", "#0B5A4B", "#0E6E5C"))
         st.markdown(
             f"""
             <div style="background: {bg_col}; border-right: 5px solid {border_col}; border-radius: 8px; padding: 14px 18px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                     <strong style="color: {text_col}; font-size: 15px;">🏛️ {rec['المجال']} — {rec['النوع']}</strong>
-                    <span style="background: {border_col}; color: white; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">أولوية {rec['الأولوية']}</span>
+                    <span style="background: {badge_col}; color: #ffffff; padding: 3px 12px; border-radius: 12px; font-size: 12.5px; font-weight: 600;">أولوية {rec['الأولوية']}</span>
                 </div>
                 <div style="color: #16302B; font-size: 13.5px; line-height: 1.6;">
                     {rec['النص']}
