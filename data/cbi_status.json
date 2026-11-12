@@ -1,13 +1,13 @@
 {
-  "last_checked_at": "2026-11-12T07:19:49+00:00",
-  "last_success_at": "2026-11-12T07:19:49+00:00",
-  "last_updated_at": "2026-11-04T19:50:47+00:00",
-  "status": "unchanged",
+  "last_checked_at": "2026-11-12T20:00:26+00:00",
+  "last_success_at": "2026-11-12T20:00:26+00:00",
+  "last_updated_at": "2026-11-12T20:00:26+00:00",
+  "status": "updated",
   "page_url": "https://cbi.iq/page/122",
-  "file_url": "https://cbi.iq/static/uploads/up/file-179378428526943.xlsx",
+  "file_url": "https://cbi.iq/static/uploads/up/file-179447781291631.xlsx",
   "periods": {
-    "monetary": "2026-08",
-    "fiscal": "2026-08",
+    "monetary": "2026-09",
+    "fiscal": "2026-09",
     "annual_budget": "2025"
   },
   "warnings": [
